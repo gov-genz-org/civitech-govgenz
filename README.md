@@ -45,6 +45,7 @@ Collecte  →  Vérification  →  Validation  →  Publication
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture technique détaillée |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Déploiement sur le VPS |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | Branches Git, conventions, bonnes pratiques |
+| [docs/CI-CD.md](docs/CI-CD.md) | Pipeline GitHub Actions, secrets, déploiement VPS |
 | [docs/API.md](docs/API.md) | Routes API backend documentées |
 | [CHANGELOG.md](CHANGELOG.md) | Historique des versions |
 

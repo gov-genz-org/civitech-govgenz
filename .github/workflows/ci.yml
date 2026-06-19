@@ -1,0 +1,211 @@
+# CI obligatoire pour les rulesets GitHub (checks : ci/test, ci/build).
+# Deploy production : push sur main uniquement (pas de serveur staging).
+
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - feature/**
+      - fix/**
+      - hotfix/**
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ci/test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Backend — dépendances & smoke test
+        working-directory: backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: "3306"
+          DB_NAME: civitech_ci
+          DB_USER: ci
+          DB_PASSWORD: ci
+          SECRET_KEY: ci_secret_key_ci_secret_key_ci_secret_key
+          ADMIN_PASSWORD: ci_admin_password
+        run: |
+          pip install -r requirements.txt
+          python -m compileall -q app
+          python -c "from app.config import settings; print('config OK:', settings.APP_ENV)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend — install & build
+        working-directory: frontend
+        env:
+          VITE_API_URL: /api
+          VITE_GA_MEASUREMENT_ID: ""
+        run: |
+          npm ci
+          npm run build
+
+      - name: .env.example changed
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          if git diff --name-only "origin/${{ github.base_ref }}"...HEAD | grep -qx '.env.example'; then
+            echo "::warning::.env.example a changé — mettre à jour les secrets GitHub (environment production) et/ou deploy/generate-dotenv.sh. Voir docs/CI-CD.md"
+          fi
+
+  build:
+    name: ci/build
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Docker Compose
+        run: |
+          cp .env.example .env
+          sed -i 's/CHANGE_ME/ci/g' .env
+          docker compose -f docker-compose.yml config --quiet
+
+      - name: Stamp deploy version
+        run: |
+          mkdir -p deploy
+          {
+            echo "${{ github.sha }}"
+            echo "event=${{ github.event_name }}"
+            echo "ref=${{ github.ref_name }}"
+            echo "run=${{ github.run_id }}"
+          } > deploy/deploy_version.txt
+
+      - name: Verify stack files
+        run: bash deploy/verify-stack.sh
+
+      - name: Upload stack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: civitech-stack
+          path: |
+            deploy/
+            docker-compose.yml
+            docker-compose.dev.yml
+            backend/
+            frontend/
+            nginx/
+            scripts/
+            .env.example
+          retention-days: 7
+
+  main-push-kind:
+    name: ci/main-push-kind
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      skip_deploy: ${{ steps.kind.outputs.skip_deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: kind
+        run: |
+          msg=$(git log -1 --pretty=%B)
+          first=$(printf '%s\n' "$msg" | head -n1)
+          if echo "$first" | grep -qiE '^(docs\(changelog\)|chore\(release\)|fix\(ci\)):'; then
+            echo "skip_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "Commit automatique — pas de deploy"
+          else
+            echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-production:
+    name: deploy/production
+    runs-on: ubuntu-latest
+    needs: [build, main-push-kind]
+    timeout-minutes: 45
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.main-push-kind.outputs.skip_deploy != 'true'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate .env from GitHub secrets
+        if: vars.DEPLOY_GENERATE_ENV == 'true'
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+          B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
+          B2_ENDPOINT_URL: ${{ secrets.B2_ENDPOINT_URL }}
+          B2_PUBLIC_URL: ${{ secrets.B2_PUBLIC_URL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM_NAME: ${{ vars.EMAIL_FROM_NAME }}
+          APP_ENV: ${{ vars.APP_ENV }}
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_GA_MEASUREMENT_ID: ${{ secrets.VITE_GA_MEASUREMENT_ID }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          bash deploy/generate-dotenv.sh .env.ci
+          wc -l .env.ci
+          ! grep -q 'CHANGE_ME' .env.ci
+
+      - uses: webfactory/ssh-agent@d4b9b12ff291dd004e70a81ea25955f0109dc763
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
+      - name: Add VPS to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload .env (mode automatique)
+        if: vars.DEPLOY_GENERATE_ENV == 'true'
+        run: |
+          scp -o StrictHostKeyChecking=yes .env.ci \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ vars.VPS_APP_DIR }}/.env"
+          rm -f .env.ci
+
+      - name: Deploy on VPS
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_APP_DIR: ${{ vars.VPS_APP_DIR }}
+          GIT_SHA: ${{ github.sha }}
+        run: bash deploy/remote-deploy.sh
+
+      - name: Health check
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/api/health" || echo "000")
+          echo "HTTP ${code} — ${APP_URL}/api/health"
+          test "$code" = "200"
