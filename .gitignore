@@ -1,0 +1,43 @@
+# ── Secrets & credentials ─────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# Fichiers internes contenant des mots de passe en clair
+AUDIT_TECHNIQUE_CIVITECH_2026-06-06.txt
+README.txt
+
+# ── Python ────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / Frontend ─────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+
+# ── OS & IDE ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Logs & temp ───────────────────────────────────────────────
+*.log
+tmp/
+temp/
+
+# ── Clés & certificats ────────────────────────────────────────
+*.pem
+*.key
+*.p12
+id_rsa
+id_ed25519

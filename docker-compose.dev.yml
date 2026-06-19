@@ -1,0 +1,27 @@
+version: "3.9"
+
+# Usage local (sans SSL, sans VPS) :
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Ce fichier surcharge docker-compose.yml pour le mode dev local :
+# - backend en --reload
+# - nginx sans SSL (port 80 seulement)
+# - VITE_API_URL pointe vers localhost
+
+services:
+  backend:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./backend:/app  # hot-reload du code
+
+  frontend:
+    build:
+      args:
+        - VITE_API_URL=/api
+
+  nginx:
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+      - nginx_logs:/var/log/nginx

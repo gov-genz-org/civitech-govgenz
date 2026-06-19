@@ -1,0 +1,292 @@
+═══════════════════════════════════════════════════════════════════
+  CIVITECH — SÉCURITÉ & MIGRATION VPS
+  Dernière mise à jour : juin 2026
+═══════════════════════════════════════════════════════════════════
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PARTIE 1 — ÉTAT DE SÉCURITÉ ACTUEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ FAIT
+  - Port 8000 (FastAPI) non exposé sur internet — accessible uniquement
+    via Nginx depuis le réseau Docker interne
+  - Fail2ban installé et actif — bannit automatiquement les IPs qui
+    tentent de se connecter en force brute sur SSH
+  - Credentials retirés du code source (config.py ne contient plus
+    aucune valeur sensible par défaut)
+  - Repo GitHub privé
+  - .env.example complet comme template de migration
+
+⏳ À FAIRE (toi, sur ton Mac + VPS)
+  - Créer une clé SSH et verrouiller l'accès root par mot de passe
+    → Instructions détaillées en Partie 2
+  - Stocker tous les secrets dans Bitwarden
+    → Modèle de note en Partie 3
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PARTIE 2 — SÉCURISER SSH (à faire une seule fois)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+POURQUOI
+  Actuellement SSH accepte les connexions root par mot de passe.
+  N'importe qui sur internet peut tenter des milliers de mots de passe
+  (fail2ban ralentit mais ne bloque pas définitivement).
+  Une clé SSH rend ça impossible : sans la clé physique, zéro accès.
+
+ÉTAPE 1 — Sur TON ordinateur (Mac), ouvrir un terminal
+  ssh-keygen -t ed25519 -C "civitech-admin"
+  → Appuyer Entrée pour accepter le chemin par défaut
+  → Choisir un mot de passe pour la clé (optionnel mais recommandé)
+  → Crée deux fichiers :
+      ~/.ssh/id_ed25519      (clé privée — ne jamais partager)
+      ~/.ssh/id_ed25519.pub  (clé publique — on va la copier sur le VPS)
+
+ÉTAPE 2 — Copier la clé sur le VPS (demande le mot de passe root une dernière fois)
+  ssh-copy-id root@82.223.115.159
+
+ÉTAPE 3 — Tester que la clé fonctionne
+  ssh root@82.223.115.159
+  → Doit s'ouvrir SANS demander de mot de passe
+  → Si ça marche : passer à l'étape 4
+  → Si ça ne marche pas : ne pas faire l'étape 4 (tu te bloquerais dehors)
+
+ÉTAPE 4 — Désactiver l'accès root par mot de passe (sur le VPS)
+  sed -i 's/^PermitRootLogin yes/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+  systemctl restart sshd
+
+  Résultat : root accessible uniquement avec ta clé ED25519.
+  Les attaquants qui essaient des mots de passe sont bloqués définitivement.
+
+NOTE IMPORTANTE
+  Si tu changes de Mac ou si tu réinstalles ton OS :
+  → Sauvegarder ~/.ssh/id_ed25519 dans un endroit sûr (clé USB chiffrée,
+    ou note sécurisée Bitwarden avec le contenu de la clé)
+  → Ou regénérer une nouvelle clé et refaire les étapes 1-4
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PARTIE 3 — INVENTAIRE DES CREDENTIALS
+  (à copier dans une Note Sécurisée Bitwarden — bitwarden.com)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Créer dans Bitwarden :
+  Type    : Note sécurisée
+  Nom     : Civitech — Production
+  Dossier : Projets / Civitech
+
+Contenu de la note :
+─────────────────────────────────────────────
+[VPS]
+IP              : 82.223.115.159
+OS              : Ubuntu, Docker Compose
+Accès SSH       : clé ED25519 (voir trousseau Mac ~/.ssh/id_ed25519)
+Mot de passe    : (garder même si SSH par clé, pour accès console urgence)
+Hébergeur VPS   : (nom de ton provider)
+Panel VPS       : (URL du dashboard)
+
+[BASE DE DONNÉES MySQL]
+Host            : (valeur DB_HOST dans .env sur le VPS)
+Port            : 3306
+Name            : (valeur DB_NAME)
+User            : (valeur DB_USER)
+Password        : (valeur DB_PASSWORD)
+Panel DB        : (URL dashboard hébergeur MySQL)
+Où réinitialiser: Panel hébergeur → Bases de données → Réinitialiser mdp
+
+[SÉCURITÉ JWT]
+SECRET_KEY      : (valeur SECRET_KEY dans .env)
+Comment régénérer: openssl rand -hex 32
+⚠️ Changer cette valeur déconnecte tous les utilisateurs de l'app
+
+[COMPTE ADMIN APP]
+Email           : admin@civitech.genzgov.org
+Mot de passe    : (valeur ADMIN_PASSWORD dans .env)
+Où changer      : Interface admin → Utilisateurs, ou directement dans .env
+
+[GMAIL — Magic Link]
+Compte Gmail    : miraseltech@gmail.com
+App Password    : (valeur SMTP_PASSWORD dans .env) ← 16 caractères
+Ce que c'est    : Mot de passe d'application Google (≠ mot de passe Gmail)
+Où régénérer    : myaccount.google.com
+                  → Sécurité → Connexion à Google
+                  → Mots de passe des applications
+                  → Supprimer l'ancien, en créer un nouveau
+
+[BACKBLAZE B2 — Stockage fichiers]
+Key ID          : (valeur B2_KEY_ID dans .env)
+Application Key : (valeur B2_APPLICATION_KEY dans .env)
+Bucket          : civitech
+Endpoint        : https://s3.us-east-005.backblazeb2.com
+Console         : secure.backblaze.com
+⚠️ L'Application Key n'est visible qu'à la création.
+   Si perdue → Account → App Keys → Supprimer l'ancienne → En créer une nouvelle
+
+[OPENROUTER / IA]
+Clé API         : configurée dans l'interface Admin de l'app
+                  Admin → Paramètres IA → Providers
+Console         : openrouter.ai → Account → API Keys
+Les clés IA sont stockées chiffrées en base de données, pas dans .env
+
+[GOOGLE ANALYTICS]
+Measurement ID  : (valeur VITE_GA_MEASUREMENT_ID dans .env, format G-XXXXXXXX)
+Console         : analytics.google.com
+                  → Admin → Flux de données → ID de mesure
+
+[GITHUB]
+Repo            : https://github.com/ELYSE-GIT/civitech-govgenz (privé)
+Accès           : SSH ou Personal Access Token
+Console tokens  : github.com/settings/tokens
+
+[DOMAINE]
+Domaine         : civitech.genzgov.org
+SSL             : Let's Encrypt — auto-renew sur le VPS
+                  Chemin certificats : /etc/letsencrypt/live/civitech.genzgov.org/
+DNS provider    : (nom de ton registrar DNS)
+Panel DNS       : (URL du panel pour modifier les enregistrements A)
+En cas de migration VPS : changer l'enregistrement A → nouvelle IP du VPS
+─────────────────────────────────────────────
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PARTIE 4 — PROCÉDURE DE MIGRATION VPS
+  (nouveau VPS en moins de 20 minutes)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PRÉREQUIS
+  - Avoir la note Bitwarden à portée (tous les secrets)
+  - Avoir accès à ton registrar DNS (pour pointer le domaine)
+  - Nouveau VPS Ubuntu 22.04 minimum, 1 vCPU / 1 Go RAM minimum
+
+ÉTAPE 1 — Préparer le serveur (connecté en root sur le nouveau VPS)
+  apt-get update && apt-get install -y docker.io docker-compose-plugin git certbot ufw fail2ban
+
+ÉTAPE 2 — Récupérer le code
+  git clone https://github.com/ELYSE-GIT/civitech-govgenz.git /app/civitech
+  cd /app/civitech
+
+ÉTAPE 3 — Créer le fichier .env
+  cp .env.example .env
+  nano .env
+  → Remplir toutes les valeurs depuis ta note Bitwarden
+  → Variables obligatoires : DB_HOST, DB_NAME, DB_USER, DB_PASSWORD,
+                              SECRET_KEY, ADMIN_PASSWORD, SMTP_PASSWORD,
+                              B2_KEY_ID, B2_APPLICATION_KEY
+  → APP_ENV=production
+  → FRONTEND_URL=https://civitech.genzgov.org
+  → CORS_ORIGINS=https://civitech.genzgov.org
+  → REDIS_URL=redis://civitech_redis:6379
+
+ÉTAPE 4 — Obtenir le certificat SSL
+  certbot certonly --standalone -d civitech.genzgov.org
+  → Doit être fait AVANT de lancer Docker (port 80 doit être libre)
+  → Entrer ton email pour les notifications de renouvellement
+
+ÉTAPE 5 — Lancer l'application
+  docker compose up -d --build
+
+ÉTAPE 6 — Configurer le firewall
+  ufw allow 22/tcp
+  ufw allow 80/tcp
+  ufw allow 443/tcp
+  ufw enable
+
+ÉTAPE 7 — Sécuriser SSH (optionnel si déjà fait)
+  ssh-copy-id root@<NOUVELLE_IP>   ← depuis ton Mac
+  sed -i 's/^PermitRootLogin yes/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+  systemctl restart sshd
+
+ÉTAPE 8 — Pointer le DNS vers la nouvelle IP
+  Aller sur le panel de ton registrar DNS
+  Modifier l'enregistrement A de civitech.genzgov.org
+  → Ancienne IP : 82.223.115.159
+  → Nouvelle IP : <IP_DU_NOUVEAU_VPS>
+  Propagation DNS : quelques minutes à 48h selon le TTL
+
+ÉTAPE 9 — Vérifier que tout fonctionne
+  curl -s -o /dev/null -w "%{http_code}" https://civitech.genzgov.org/api/public/stats
+  → Doit retourner 200
+
+NOTE SUR LA BASE DE DONNÉES
+  La DB MySQL est hébergée séparément (207.174.213.251).
+  Elle ne bouge pas avec le VPS — aucune migration de données nécessaire.
+  Si tu changes aussi de DB : mettre à jour DB_HOST dans le .env.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PARTIE 5 — OPÉRATIONS COURANTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DÉPLOYER UNE MISE À JOUR
+  # Sur ton Mac : pousser le code
+  git push origin main
+
+  # Sur le VPS : tirer et relancer
+  cd /app/civitech && git pull && docker compose up -d --build
+
+  ⚠️ Toujours git push AVANT git pull sur le VPS
+  ⚠️ docker compose restart ne recharge PAS le .env — utiliser up -d
+
+VOIR LES LOGS
+  docker logs civitech_backend --tail=50
+  docker logs civitech_nginx --tail=50
+
+REDÉMARRER UN CONTAINER
+  docker compose restart civitech_backend
+
+VÉRIFIER L'ÉTAT DE L'APP
+  docker ps
+  curl https://civitech.genzgov.org/api/public/stats
+
+VÉRIFIER LE CACHE REDIS
+  docker exec civitech_redis redis-cli KEYS '*'
+  docker exec civitech_redis redis-cli DBSIZE
+
+VIDER LE CACHE REDIS (si besoin après une migration de données)
+  docker exec civitech_redis redis-cli FLUSHDB
+
+RENOUVELER LE CERTIFICAT SSL MANUELLEMENT
+  docker compose down
+  certbot renew
+  docker compose up -d
+
+ACCÉDER À LA BASE DE DONNÉES DEPUIS LE BACKEND
+  docker exec -it civitech_backend python3
+  >>> from app.database import SessionLocal
+  >>> from app.models.user import User
+  >>> db = SessionLocal()
+  >>> db.query(User).count()
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PARTIE 6 — ARCHITECTURE RAPIDE (pour un nouveau développeur)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STACK
+  Backend  : FastAPI (Python 3.11) — port 8000 interne
+  Frontend : React 18 + Vite — servi par Nginx
+  DB       : MySQL distant (non sur le VPS)
+  Cache    : Redis 7 (sur le VPS, Docker)
+  Proxy    : Nginx (ports 80/443 publics, SSL Let's Encrypt)
+  Fichiers : Backblaze B2 (bucket privé, proxy /api/media/)
+
+FLUX D'UNE REQUÊTE
+  Navigateur → Nginx:443 → /api/* → FastAPI:8000
+                                  → /*     → React (HTML/JS)
+
+RÔLES UTILISATEURS (du plus au moins privilégié)
+  superadmin > admin > moderator > z_ambassador > z_citizen
+
+VARIABLES D'ENVIRONNEMENT
+  Toutes dans /app/civitech/.env sur le VPS
+  Template : .env.example dans le repo GitHub
+  NE JAMAIS commiter le .env (il est dans .gitignore)
+
+REPO GITHUB
+  https://github.com/ELYSE-GIT/civitech-govgenz (privé)
+  Documentation technique : CLAUDE.md à la racine
+
+═══════════════════════════════════════════════════════════════════
+  FIN DU DOCUMENT
+═══════════════════════════════════════════════════════════════════
